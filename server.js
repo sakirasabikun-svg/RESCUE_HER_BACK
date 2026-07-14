@@ -4,14 +4,10 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { Resend } = require('resend'); // 🛠️ Nodemailer এর বদলে Resend ইমপোর্ট করা হলো
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'rescueher_super_secret_matrix_key_2026';
-
-// 🛠️ Resend ইনিশিয়ালাইজেশন
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 app.use(cors());
 app.use(express.json());
@@ -35,7 +31,7 @@ mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected Successfully!"))
   .catch(err => console.error("❌ MongoDB Connection Error:", err));
 
-// MongoDB Schemas (🛠️ LiveLocation-এ user_id যুক্ত করা হয়েছে যেন লোকেশন জ্যাম না লাগে)
+// MongoDB Schemas
 const User = mongoose.model('User', new mongoose.Schema({ name: String, phone: String, blood_group: String, email: { type: String, unique: true }, password: String }));
 const Incident = mongoose.model('Incident', new mongoose.Schema({ user_id: String, location: String, severity: String, description: String, timestamp: String }));
 const Contact = mongoose.model('Contact', new mongoose.Schema({ user_id: String, name: String, role: String, phone: String, email: String }));
@@ -105,7 +101,7 @@ app.delete('/api/contacts/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// 🛠️ LOCATION API FIX: এখন নির্দিষ্ট ইউজারের আইডি ট্র্যাক করবে, কোনো মিক্সআপ হবে না
+// LOCATION API
 app.get('/api/location/:userId', authenticateToken, async (req, res) => {
   try { 
     const loc = await LiveLocation.findOne({ user_id: req.params.userId }); 
@@ -125,40 +121,23 @@ app.post('/api/location/update', authenticateToken, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// 🛠️ SOS API: Resend API ব্যবহার করে ইমেইল পাঠানো (যা Render ফ্রি-তে ব্লক করতে পারবে না)
+// 🛠️ SOS API UPDATE: এখন শুধু হিস্ট্রি সেভ করবে। ইমেইল পাঠানো ফ্রন্টএন্ড হ্যান্ডেল করছে।
 app.post('/api/sos/trigger', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { latitude, longitude, area } = req.body;
+    const { area } = req.body;
     
-    // 1. Incident Save
-    await Incident.create({ user_id: userId, location: area, severity: 'Critical', description: 'Emergency SOS', timestamp: new Date().toLocaleString() });
-    
-    // 2. Fetch Contacts
-    const contacts = await Contact.find({ user_id: userId });
-    
-    // 3. Filter Valid Emails
-    const validEmails = contacts.map(c => c.email).filter(email => email && email.includes('@'));
-
-    if (validEmails.length === 0) {
-      console.log("No valid email addresses found for user:", userId);
-      return res.status(200).json({ success: false, message: "No valid email addresses found in your contacts!" });
-    }
-
-    // 4. Send Email via Resend API
-    const { data, error } = await resend.emails.send({
-      from: 'RescueHer SOS <onboarding@resend.dev>',
-      to: validEmails,
-      subject: '🚨 EMERGENCY ALERT!',
-      html: `<p>Emergency at <strong>${area}</strong>. <br><br><a href="https://maps.google.com/?q=${latitude},${longitude}" target="_blank">Track Location on Google Maps</a></p>`
+    // 1. শুধু ডাটাবেজে হিস্ট্রি (Incident) সেভ করা হচ্ছে
+    await Incident.create({ 
+      user_id: userId, 
+      location: area || "SOS Module Triggered", 
+      severity: 'Critical', 
+      description: 'Emergency SOS Broadcast Generated', 
+      timestamp: new Date().toLocaleString() 
     });
-
-    if (error) {
-      console.error("Resend API Error details:", error);
-      return res.status(500).json({ success: false, message: error.message });
-    }
     
-    res.status(200).json({ success: true, message: "SOS Activated!", mailId: data.id });
+    // 2. সফলতার মেসেজ পাঠিয়ে দেওয়া হচ্ছে (বাকি মেইল ফ্রন্টএন্ড করবে)
+    res.status(200).json({ success: true, message: "SOS Location Logged Successfully!" });
   } catch (err) { 
     console.error("🔥 CRITICAL SOS ERROR:", err); 
     res.status(500).json({ success: false, message: err.message }); 
